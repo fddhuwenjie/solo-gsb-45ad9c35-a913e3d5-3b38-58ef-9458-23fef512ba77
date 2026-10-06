@@ -486,6 +486,80 @@ class WorksheetDiagnoseResponse(BaseModel):
     )
 
 
+class WorksheetMigrateRequest(WorksheetBody):
+    """POST /worksheet-migrate 请求体：现有工作单 + 旧/新两份定义集引用。
+
+    工作单本体（初始变量与 2～5 个步骤）的校验与 ``POST /worksheet``、
+    ``POST /worksheet-diagnose`` 完全一致；两侧引用在请求开始时各解析
+    一次并固定实际指向。
+    """
+
+    old: UnitSetRef = Field(
+        description="旧版已发布定义集的标识或活动别名；请求开始即固定实际指向"
+    )
+    new: UnitSetRef = Field(
+        description="新版已发布定义集的标识或活动别名；请求开始即固定实际指向"
+    )
+
+
+class MigrateSide(BaseModel):
+    """迁移请求中一侧（旧/新）引用的解析结果。"""
+
+    reference: UnitSetRef = Field(description="请求中提交的引用（标识或别名）")
+    resolved_id: str = Field(
+        description="请求开始时固定下来的实际定义集标识；新工作单引用该标识"
+    )
+
+
+class MigratedVariable(BaseModel):
+    """改写后的初始变量：单位表达式不变，值为新定义下的精确十进制。"""
+
+    value: str = Field(
+        description="改写后的精确十进制值（字符串）：与旧定义下的原变量表示"
+        "同一物理量（SI 口径精确分数、量纲与绝对温度属性一致）"
+    )
+    unit: str = Field(description="单位表达式（与原工作单相同）")
+
+
+class MigratedWorksheet(BaseModel):
+    """可直接交给 ``POST /worksheet`` 的新工作单请求体。"""
+
+    variables: dict[str, MigratedVariable] = Field(
+        description="改写后的初始变量（无初始变量时为空对象）"
+    )
+    steps: list[WorksheetStep] = Field(
+        description="与原工作单完全一致的步骤（顺序与内容不变）"
+    )
+    custom_unit_set_id: str = Field(
+        description="请求开始时固定下来的新定义集标识"
+    )
+
+
+class MigrateStepCheck(BaseModel):
+    """迁移后逐步核对的明细：两侧该步的显示结果（内部精确量已核对一致）。"""
+
+    index: int = Field(description="步骤下标（从 0 开始）")
+    name: str = Field(description="步骤结果名")
+    old: WorksheetStepResult = Field(description="旧定义集下该步的显示结果")
+    new: WorksheetStepResult = Field(
+        description="改写后的工作单在新定义集下该步的显示结果；"
+        "内部精确量/量纲/绝对温度属性与旧侧一致，显示值允许变化"
+    )
+
+
+class WorksheetMigrateResponse(BaseModel):
+    """POST /worksheet-migrate 的成功响应。"""
+
+    old: MigrateSide = Field(description="旧版定义集一侧的引用与固定结果")
+    new: MigrateSide = Field(description="新版定义集一侧的引用与固定结果")
+    worksheet: MigratedWorksheet = Field(
+        description="可直接交给 POST /worksheet 的新工作单（引用固定的新定义集标识）"
+    )
+    steps: list[MigrateStepCheck] = Field(
+        description="逐步核对明细（顺序与提交一致）"
+    )
+
+
 class ConvertResponse(BaseModel):
     """POST /convert、POST /evaluate 与 POST /solve 的成功响应。"""
 

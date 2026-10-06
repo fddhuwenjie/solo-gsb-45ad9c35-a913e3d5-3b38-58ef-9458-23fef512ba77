@@ -20,6 +20,7 @@ from .custom_units import scope_for_request
 from .diagnose import diagnose_worksheet
 from .errors import AliasConflictError, ConversionError, affine_mixing
 from .evaluator import evaluate, make_quantity
+from .migrate import migrate_worksheet
 from .parser import ParsedExpression, canonical, canonical_dim, parse_expression
 from .schemas import (
     BindUnitSetAliasRequest,
@@ -34,6 +35,8 @@ from .schemas import (
     UnitSetAliasListResponse,
     WorksheetDiagnoseRequest,
     WorksheetDiagnoseResponse,
+    WorksheetMigrateRequest,
+    WorksheetMigrateResponse,
     WorksheetRequest,
     WorksheetResponse,
 )
@@ -64,6 +67,9 @@ app = FastAPI(
         "/worksheet-diagnose 把同一工作单分别放到旧/新两份已发布定义集"
         "（标识或活动别名）下各执行一遍，按内部精确数值、量纲与绝对温度"
         "属性逐步对照并报告首个含义变化。"
+        "/worksheet-migrate 把现有工作单从旧定义集迁移到新定义集："
+        "初始变量改写为新定义下同一单位表达式、同一物理量的精确十进制值，"
+        "返回可直接交给 /worksheet 的新工作单。"
         "可通过 POST /custom-unit-sets 把自定义单位发布为可复用定义集，"
         "再由四个接口凭标识选用。"
     ),
@@ -308,6 +314,32 @@ def worksheet_diagnose_endpoint(
     # 量纲与绝对温度属性比较（而非显示字符串）。工作单业务错误（变量解析或
     # 某步失败）结构化出现在 200 响应中；未知定义集/别名与非法请求仍为 422。
     return diagnose_worksheet(req)
+
+
+@app.post(
+    "/worksheet-migrate",
+    response_model=WorksheetMigrateResponse,
+    response_model_exclude_none=True,
+    responses={
+        422: {
+            "model": ErrorResponse,
+            "description": "旧工作单出错、新定义下变量或步骤单位不兼容、改写值无法"
+            "精确十进制表示、新工作单出错或结果含义变化；不返回迁移工作单",
+        }
+    },
+    summary="工作单输入迁移：把 2～5 步工作单从旧定义集迁移到新定义集",
+)
+def worksheet_migrate_endpoint(
+    req: WorksheetMigrateRequest,
+) -> WorksheetMigrateResponse:
+    # 开始时分别固定旧/新两侧引用的实际指向（别名各解析一次），先在旧定义
+    # 下执行整张工作单，再把每个初始变量改写为新定义下同一单位表达式、同一
+    # 物理量的精确十进制值；改写后在新定义下执行整张工作单并逐步核对内部
+    # 精确量、量纲与绝对温度属性（显示值允许变化）。全部通过后返回可直接
+    # 交给 /worksheet 的新工作单（引用固定的新定义集标识）。任何失败返回
+    # 422 并指出变量或步骤，不返回迁移工作单；整个操作只读，不修改定义集
+    # 或别名。
+    return migrate_worksheet(req)
 
 
 @app.get("/health", summary="健康检查")

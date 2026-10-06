@@ -49,18 +49,20 @@ _DIFF_ORDER = ("value", "dimension", "absolute")
 
 
 @dataclass(frozen=True)
-class _ResolvedSide:
+class ResolvedSide:
     """一侧引用解析后的实际标识与按该版定义构造的请求级上下文。"""
 
     resolved_id: str
     scope: object
 
 
-def _resolve_side(ref: UnitSetRef, store: UnitSetStore) -> _ResolvedSide:
+def resolve_side(ref: UnitSetRef, store: UnitSetStore) -> ResolvedSide:
     """在任何步骤执行前固定一侧的实际定义集标识并构造独立上下文。
 
     别名在此一次性快照（``get_alias`` 在锁内读取当前指向），之后整侧只
     使用返回的 scope；标识或别名不存在时抛出 422 领域错误。
+    ``POST /worksheet-diagnose`` 与 ``POST /worksheet-migrate`` 共用本函数，
+    保证两个换版接口的“请求开始时固定实际指向”语义完全一致。
     """
 
     if ref.custom_unit_set_alias is not None:
@@ -70,7 +72,7 @@ def _resolve_side(ref: UnitSetRef, store: UnitSetStore) -> _ResolvedSide:
         assert resolved_id is not None
         # 标识不存在在此抛出 422（build_scope 内部也会再取一次）
         store.get(resolved_id)
-    return _ResolvedSide(resolved_id=resolved_id, scope=store.build_scope(resolved_id))
+    return ResolvedSide(resolved_id=resolved_id, scope=store.build_scope(resolved_id))
 
 
 def _error_payload(exc) -> DiagnosticError:
@@ -132,8 +134,8 @@ def diagnose_worksheet(
     # 1) 开始时分别固定两侧的实际指向（别名在任何步骤执行前各解析一次），
     #    随后各用各的独立 scope 执行同一工作单；整个诊断只读，不修改
     #    定义集或别名。任一侧引用不存在都在此抛出 422（不执行任何步骤）。
-    old_resolved = _resolve_side(req.old, chosen)
-    new_resolved = _resolve_side(req.new, chosen)
+    old_resolved = resolve_side(req.old, chosen)
+    new_resolved = resolve_side(req.new, chosen)
 
     # 2) 用各自定义执行同一工作单（业务错误被收集，不抛出；失败后的步骤
     #    标记为 not_run，不计为成功）

@@ -79,3 +79,7 @@ def nonlinear_equation(message: str) -> ConversionError:
 
 def no_unique_solution(message: str) -> ConversionError:
     return ConversionError("no_unique_solution", message)
+
+
+def migration_failed(message: str) -> ConversionError:
+    return ConversionError("migration_failed", message)
