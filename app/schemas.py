@@ -486,6 +486,54 @@ class WorksheetDiagnoseResponse(BaseModel):
     )
 
 
+class WorksheetMigrateRequest(WorksheetBody):
+    """POST /worksheet-migrate 请求体：现有工作单 + 旧/新两份定义集引用。
+
+    结构与诊断请求一致：两侧引用在请求开始时各解析一次并固定实际指向，
+    随后先在旧定义下执行原工作单，再把初始变量改写为新定义下物理量
+    相同的精确十进制值。
+    """
+
+    old: UnitSetRef = Field(
+        description="旧版已发布定义集的标识或活动别名；请求开始即固定实际指向"
+    )
+    new: UnitSetRef = Field(
+        description="新版已发布定义集的标识或活动别名；请求开始即固定实际指向"
+    )
+
+
+class MigratedVariable(BaseModel):
+    """迁移后的初始变量：单位表达式不变，数值改写为新定义下的精确十进制。"""
+
+    value: str = Field(
+        description="改写后的精确十进制值（字符串形式，可直接作为 /worksheet 输入）"
+    )
+    unit: str = Field(description="单位表达式（与原工作单完全一致）")
+
+
+class MigratedWorksheet(BaseModel):
+    """可直接提交给 POST /worksheet 的迁移后工作单。"""
+
+    variables: dict[str, MigratedVariable] = Field(
+        description="改写后的初始变量（原工作单无初始变量时为空对象）"
+    )
+    steps: list[WorksheetStep] = Field(description="与原工作单完全一致的步骤")
+    custom_unit_set_id: str = Field(
+        description="请求开始时固定的新版定义集标识（引用标识而非别名，"
+        "此后别名再被切换也不影响本工作单）"
+    )
+
+
+class WorksheetMigrateResponse(BaseModel):
+    """POST /worksheet-migrate 的成功响应。"""
+
+    old_resolved_id: str = Field(description="请求开始时固定的旧版定义集标识")
+    new_resolved_id: str = Field(description="请求开始时固定的新版定义集标识")
+    worksheet: MigratedWorksheet = Field(
+        description="可直接提交给 POST /worksheet 的迁移后工作单"
+    )
+
+
 class ConvertResponse(BaseModel):
     """POST /convert、POST /evaluate 与 POST /solve 的成功响应。"""
 

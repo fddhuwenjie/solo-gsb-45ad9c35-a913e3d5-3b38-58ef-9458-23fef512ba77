@@ -11,6 +11,7 @@
 - **等式求解（`POST /solve`）**：用带单位的等式反求未知量：两侧以 `Fraction` 同步构建未知量的一次系数与常数项并校验量纲，支持 `+ - * /`、括号与纯常数幂，解精确换算到线性的 `output_unit`
 - **顺序计算工作单（`POST /worksheet`）**：一次请求提交初始带单位变量与 **2～5 个步骤**，每步要么是公式求值、要么是一次线性方程反求，给出唯一结果名与目标单位；后续步骤可按结果名引用先前步骤的结果，步骤间传递**精确分数数值与绝对温度属性**，返回各步骤的 `value`/`unit`/`dimension` 供核对完整过程；任一步错误返回 **422 且不返回部分结果**
 - **工作单换版诊断（`POST /worksheet-diagnose`）**：一次请求提交同一份 2～5 步工作单与旧、新两份**已发布**定义集的标识或活动别名；请求开始时分别固定两侧实际指向，用各自定义各执行一遍（只读、不改定义集或别名），逐步并排返回两侧结果与**首个含义变化**。比较按 **SI 口径精确分数数值、量纲与绝对温度属性**进行，而非显示字符串——旧版 `span=2 m`、新版 `span=3 m` 时输入 `1 span` 并输出到 `span`，两侧虽都显示 `1 span` 也会报告物理值已变。某一侧第 k 步业务失败时保留此前步骤对照并回报该步错误，失败后步骤标记 `not_run` 不计成功；未知定义集/别名或非法请求返回 422
+- **工作单输入迁移（`POST /worksheet-migrate`）**：一次请求提交现有 2～5 步工作单与旧、新定义集标识或活动别名（请求开始分别固定两侧实际指向）；先在旧定义下执行，再把每个初始变量改写成**新定义下单位表达式相同、物理量（含量纲与绝对温度属性）也相同的精确十进制值**，返回可直接交给 `/worksheet` 的新工作单（引用固定的新定义集标识）。改写后整张工作单在新定义下再执行一遍，逐步核对内部精确量、量纲与绝对温度属性（显示值允许变化）；旧工作单出错、新定义下变量或步骤单位不兼容、改写值无法精确十进制表示、新工作单出错或结果含义变化时返回 **422 并指出变量或步骤**，不返回迁移工作单。操作只读，不改写定义集或别名
 - **量纲规范化**：输出规范单位表达式与 SI 基本量纲表达式，相同输入永远产生相同输出
 - **SI 词头**：`Y Z E P T G M k h da d c m u µ n p f a z y`（如 `km`、`mV`、`µm`）
 - **仿射温标**：`degC`（°C）、`degF`（°F）、`K` 互为绝对温度换算；温差单位 `dC`/`dF`/`dK` 严格隔离，**禁止温差与绝对温度混算**；公式中的绝对温标变量只能作为唯一项
@@ -770,11 +771,124 @@ curl -X POST http://localhost:8000/worksheet-diagnose \
 }
 ```
 
+### `POST /worksheet-migrate`
+
+**工作单输入迁移**：把一份在旧版定义集下可正常执行的现有工作单（初始变量 +
+**2～5 个步骤**，结构与 `POST /worksheet` 的请求体一致，但不含
+`custom_units`/`custom_unit_set_id`/`custom_unit_set_alias`）改写为在**新版**
+已发布定义集下物理量完全相同的等价工作单，一次请求完成全部核对：
+
+1. 请求开始时分别**固定**旧/新两侧引用的实际定义集标识（`old`/`new` 各为
+   `{"custom_unit_set_id": "..."}` 或 `{"custom_unit_set_alias": "..."}`，
+   二者恰好一个；别名各解析一次，执行期间切换别名不会造成同侧混版）；
+2. **先在旧定义下完整执行**原工作单——旧工作单本身出错即返回 422；
+3. 把每个**初始变量**改写为：同一单位表达式在新定义下解析，量纲与绝对温度
+   属性不变，数值换算为该单位在新定义下的**精确十进制值**；
+4. 用固定的新定义集**标识**组装新工作单并在新定义下**完整复核一遍**：
+   逐步核对内部精确量（SI 分数数值、量纲、绝对温度属性）与旧执行一致——
+   **显示值允许变化**；
+5. 全部通过后返回可直接交给 `POST /worksheet` 的新工作单。
+
+整个操作为只读，不修改定义集或别名。
+
+成功响应 **200**：
+
+| 字段 | 说明 |
+| ---- | ---- |
+| `old_resolved_id` / `new_resolved_id` | 请求开始时固定的两侧实际定义集标识 |
+| `worksheet` | 可直接提交给 `POST /worksheet` 的新工作单：`variables`（单位表达式不变、数值已改写）、`steps`（与原工作单一致）、`custom_unit_set_id`（固定的新标识，而非别名——此后别名再被切换也不影响它） |
+
+**换版成功的完整调用示例**：
+
+```bash
+# 1) 旧版：1 span = 2 m；修正后的新版：1 span = 4 m
+curl -X POST http://localhost:8000/custom-unit-sets \
+  -H 'Content-Type: application/json' \
+  -d '{"custom_units":[{"symbol":"span","factor":"2","base_unit":"m"}]}'
+# -> {"id":"cus_v1", ...}
+curl -X POST http://localhost:8000/custom-unit-sets \
+  -H 'Content-Type: application/json' \
+  -d '{"custom_units":[{"symbol":"span","factor":"4","base_unit":"m"}]}'
+# -> {"id":"cus_v2", ...}
+
+# 2) 迁移现有工作单（x = 3 span 的物理量是 6 m，新版下应改写为 1.5 span）
+curl -X POST http://localhost:8000/worksheet-migrate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "variables": {"x": {"value": "3", "unit": "span"}},
+    "steps": [
+      {"name": "a", "formula": "x*2", "output_unit": "span"},
+      {"name": "b", "formula": "a",   "output_unit": "m"}
+    ],
+    "old": {"custom_unit_set_id": "cus_v1"},
+    "new": {"custom_unit_set_id": "cus_v2"}
+  }'
+```
+
+```json
+{
+  "old_resolved_id": "cus_v1",
+  "new_resolved_id": "cus_v2",
+  "worksheet": {
+    "variables": {"x": {"value": "1.5", "unit": "span"}},
+    "steps": [
+      {"name": "a", "output_unit": "span", "formula": "x*2"},
+      {"name": "b", "output_unit": "m", "formula": "a"}
+    ],
+    "custom_unit_set_id": "cus_v2"
+  }
+}
+```
+
+```bash
+# 3) 响应中的 worksheet 可直接交给 /worksheet（引用固定的新标识 cus_v2）
+curl -X POST http://localhost:8000/worksheet \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "variables": {"x": {"value": "1.5", "unit": "span"}},
+    "steps": [
+      {"name": "a", "formula": "x*2", "output_unit": "span"},
+      {"name": "b", "formula": "a",   "output_unit": "m"}
+    ],
+    "custom_unit_set_id": "cus_v2"
+  }'
+# {"steps":[{"name":"a","value":"3","unit":"span","dimension":"m"},
+#           {"name":"b","value":"12","unit":"m","dimension":"m"}]}
+```
+
+注意第 0 步显示值从旧定义下的 `6 span` 变为 `3 span`（显示值允许变化），
+而第 1 步折到内置单位 `m` 两侧都是 `12`——物理量保持一致。
+
+**HTTP 422**（不返回迁移工作单；响应在统一 `detail` 上额外指出出错的
+`variable`，或 `step_index`/`step_name`）：
+
+- 旧工作单出错：初始变量在旧定义下无法解析（指出变量），或某步业务失败
+  （指出步骤，错误码与 `POST /worksheet` 相同）；
+- 初始变量的单位在新定义下无法解析、量纲或绝对温度属性不一致
+  （指出变量）；
+- 改写值无法精确十进制表示（或超出输入精度上限）：`precision_overflow`
+  （指出变量）——例如新版改为 `1 span = 3 m` 时，`x = 1 span` 的物理量
+  是 `2 m`，改写成 `span` 为 `2/3`，无法精确表示：
+
+```json
+{"detail": {"error": "precision_overflow",
+            "message": "初始变量 'x' 的改写值无法表示为精确十进制: ……",
+            "variable": "x"}}
+```
+
+- 改写后的工作单在新定义下某步失败（如步骤目标单位在新版下不存在或
+  量纲不兼容、显示值无法精确表示），指出步骤；
+- 某步结果含义变化（内部精确数值/量纲/绝对温度属性与旧执行不一致）：
+  `meaning_changed`，指出步骤；
+- 旧/新引用的定义集标识或活动别名不存在、引用里 `id` 与 `alias` 同时给
+  （或都不给）、步骤数不在 2～5 等请求级错误：`invalid_request`。
+
 ### 其他端点
 
 | 端点         | 说明                             |
 | ------------ | -------------------------------- |
 | `POST /worksheet-diagnose` | 工作单换版诊断：同一 2～5 步工作单分别在旧/新已发布定义集（标识或活动别名）下执行，逐步并排对照并报告首个含义变化；业务失败结构化返回，未知定义集/非法请求 422 |
+| `POST /worksheet-migrate` | 工作单输入迁移：把现有 2～5 步工作单的初始变量改写为新定义集下物理量相同的精确十进制值，返回可直接交给 `/worksheet` 的新工作单（引用固定的新标识）；失败 422 并指出变量或步骤 |
 | `POST /custom-unit-sets` | 发布 1～6 项自定义单位定义为可复用定义集，返回服务生成标识（201） |
 | `GET /custom-unit-set-aliases` | 列出全部活动别名及其当前指向的定义集标识 |
 | `GET /custom-unit-set-aliases/{alias}` | 查询单个活动别名当前指向（不存在返回 422） |
@@ -863,6 +977,11 @@ PRIMARY:= "(" expr ")" | VARIABLE | DECIMAL
 | `nonlinear_equation` | 未知量处于非线性位置（相乘、作除数、参与幂；按结构判定，零值因子/相消子式不豁免） |
 | `no_unique_solution` | 未知量系数为零：方程无解或有无穷多解   |
 | `precision_overflow` | 结果不是有限十进制或超过精度上限       |
+| `meaning_changed`    | 仅 `POST /worksheet-migrate`：复核时发现某步内部精确数值/量纲/绝对温度属性与旧定义下不一致，迁移被拒绝 |
+
+`POST /worksheet-migrate` 的 422 响应在 `detail` 上额外携带 `variable`
+（出错的初始变量名）或 `step_index`/`step_name`（出错的步骤位置与结果名），
+此时不返回迁移工作单。
 
 **唯一的非 422 领域状态**：`PUT /custom-unit-set-aliases/{alias}` 在别名当前指向
 与提交的 `expected_id` 不一致时返回 **HTTP 409**：
@@ -885,8 +1004,9 @@ app/
   parser.py     # 单位表达式解析器（递归下降）与规范化输出
   evaluator.py  # 公式求值器（Fraction 数值/量纲合并、温标规则）
   solver.py     # 等式求解器（未知量一次系数/常数的 Fraction 构建与量纲校验）
-  worksheet.py  # 顺序计算工作单：2～5 个求值/反求步骤顺序执行，步骤间传递精确量与绝对温度属性；另有逐步收集器（不抛业务错误）供换版诊断使用
+  worksheet.py  # 顺序计算工作单：2～5 个求值/反求步骤顺序执行，步骤间传递精确量与绝对温度属性；另有逐步收集器（不抛业务错误）供换版诊断与输入迁移使用
   diagnose.py   # 工作单换版诊断：开始时固定旧/新定义集指向，两侧各执行同一工作单，按内部精确数值/量纲/绝对温度属性逐步比较并定位首个含义变化
+  migrate.py    # 工作单输入迁移：旧定义下执行后把初始变量改写为新定义下物理量相同的精确十进制值，复核整张新工作单并返回可直接交给 /worksheet 的结果
   units.py      # 单位注册表、SI 词头与别名
   custom_units.py  # 请求级自定义单位（custom_units）：冲突/循环/禁引校验与链式解析，三种来源选择
   unit_sets.py  # 已发布定义集与活动别名：校验发布、标识生成、别名乐观切换（CAS）、线程安全与 JSON 落盘/重载
@@ -899,6 +1019,7 @@ tests/
   test_solve.py     # /solve 端到端测试
   test_worksheet.py # /worksheet 顺序工作单（引用规则/精确与温标传递/三来源/别名只解析一次）端到端测试
   test_worksheet_diagnose.py # /worksheet-diagnose 换版诊断（显示相同物理值已变/量纲与绝对温度/部分失败/别名固定/422）端到端测试
+  test_worksheet_migrate.py # /worksheet-migrate 输入迁移（改写变量/往返提交/别名固定/各类 422 指出变量或步骤）端到端测试
   test_custom_units.py  # 请求级自定义单位（四个接口）端到端测试
   test_unit_sets.py     # 可复用定义集发布/选用/互斥/隔离/不可变/持久化测试
   test_unit_set_aliases.py  # 活动别名查询/切换（409/422）/四接口选用/并发一致性/持久化与旧文件兼容测试

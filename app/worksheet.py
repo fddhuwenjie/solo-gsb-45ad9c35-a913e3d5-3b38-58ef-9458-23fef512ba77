@@ -106,7 +106,7 @@ def _convert_step_result(
     return value_fr, canonical(dst.terms), canonical_dim(dst.dim)
 
 
-def _initial_env(req: WorksheetRequest, scope) -> dict[str, Quantity]:
+def initial_env(req: WorksheetRequest, scope) -> dict[str, Quantity]:
     """解析初始变量单位并折叠为 SI 口径精确量；未知单位等错误在此抛出。"""
 
     return {
@@ -163,7 +163,7 @@ def _run_steps(req: WorksheetRequest, scope) -> list[_StepOutcome]:
     """顺序执行全部步骤；任一步失败即抛出（422，无部分结果）。"""
 
     # 初始变量先解析单位并折叠为 SI 口径的精确量；未知单位在此即报 422
-    env = _initial_env(req, scope)
+    env = initial_env(req, scope)
 
     outcomes: list[_StepOutcome] = []
     for step in req.steps:
@@ -200,7 +200,7 @@ def collect_worksheet_run(req: WorksheetRequest, scope) -> WorksheetRun:
     """
 
     try:
-        env = _initial_env(req, scope)
+        env = initial_env(req, scope)
     except ConversionError as exc:
         return WorksheetRun(
             setup_error=exc,

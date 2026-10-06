@@ -20,6 +20,30 @@ class ConversionError(Exception):
         super().__init__(message)
 
 
+class MigrationError(ConversionError):
+    """工作单输入迁移失败（HTTP 422）：在统一错误负载上指出出错的变量或步骤。
+
+    ``variable`` 非空表示某个初始变量出问题（旧定义下无法解析、新定义下
+    单位不兼容、或改写值无法精确十进制表示）；``step_index``/``step_name``
+    非空表示某个步骤出问题（旧工作单该步失败、改写后的工作单该步失败、
+    或该步结果含义变化）。此时不返回迁移工作单。
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        variable: str | None = None,
+        step_index: int | None = None,
+        step_name: str | None = None,
+    ) -> None:
+        super().__init__(code, message)
+        self.variable = variable
+        self.step_index = step_index
+        self.step_name = step_name
+
+
 class AliasConflictError(Exception):
     """别名切换冲突：当前指向与提交的 expected_id 不一致（HTTP 409）。
 
